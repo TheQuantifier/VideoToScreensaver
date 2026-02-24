@@ -1,6 +1,14 @@
 # VideoToScreensaverWindows
 
-Windows app that lets you pick a video file, install it as a screensaver, and then open Screen Saver settings to enable or verify it.
+This project is for **Windows only**.
+
+Use the standalone installer to install the app quickly:
+
+1. Download `VideoToScreensaver-Setup.exe` from the latest GitHub Release.
+2. Run the installer.
+3. Launch `VideoToScreensaver` from Start Menu.
+
+The app lets you pick a video file, install it as a screensaver, and then open Screen Saver settings to enable or verify it.
 
 ## What you get
 - A GUI executable (`VideoToScreensaver.exe`).
@@ -9,7 +17,7 @@ Windows app that lets you pick a video file, install it as a screensaver, and th
 - Built-in steps for what to do next in Windows settings.
 - Fullscreen video playback in screensaver mode (`/s`).
 
-## 1) Setup in VS Code
+## 1) Setup in VS Code (for building from source)
 
 ```powershell
 python -m venv .venv
