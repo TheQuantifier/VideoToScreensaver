@@ -56,7 +56,7 @@ Output:
    - `Video fit` (`contain`, `cover`, `stretch`)
 4. Click `Install as Screensaver`.
 5. Click `Open Screen Saver Settings`.
-6. Confirm `VideoToScreensaver` is selected, set idle wait, click `Apply`.
+6. Confirm `"<yourfilename>_vts.scr"` is selected, set idle wait, click `Apply`.
 
 The app also includes a `Managed screensavers` section where you can:
 - list all `.scr` files created by this app
