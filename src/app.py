@@ -556,7 +556,7 @@ def launch_gui() -> None:
             f"Video copy: {copied_video}\n\n"
             "Next steps:\n"
             "1) Click 'Open Screen Saver Settings'\n"
-            "2) Ensure VideoToScreensaver is selected\n"
+            "2) Ensure '<yourfilename>_vts.scr' is selected\n"
             "3) Set wait time and click Apply",
         )
         refresh_screensaver_list()
@@ -705,7 +705,7 @@ def launch_gui() -> None:
     steps_text = (
         "After installing:\n"
         "1) Open Screen Saver Settings.\n"
-        "2) Confirm 'VideoToScreensaver' is selected.\n"
+        "2) Confirm '<yourfilename>_vts.scr' is selected.\n"
         "3) Set 'Wait' to your preferred idle time.\n"
         "4) Click Apply, then OK."
     )
