@@ -1,6 +1,8 @@
-# VideoToScreensaverWindows
+# VideoToScreensaver Windows
 
 This project is for **Windows only**.
+
+VideoToScreensaver lets you turn your own video files into a real Windows screensaver with a simple UI. It supports one-click install, per-screen video fit modes (`contain`, `cover`, `stretch`) including multi-monitor playback, quick preview, and built-in management for removing old app-created screensavers.
 
 Use the standalone installer to install the app quickly:
 
