@@ -1,10 +1,14 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import ctypes
+import urllib.error
+import urllib.request
+import webbrowser
 import winreg
 from ctypes import wintypes
 from pathlib import Path
@@ -16,10 +20,13 @@ import numpy as np
 
 
 APP_NAME = "VideoToScreensaver"
+APP_VERSION = "1.1.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 SCR_NAME = f"{APP_NAME}.scr"
 CONFIG_NAME = "config.json"
 SCR_TAG = "_vts"
+UPDATE_API_URL = "https://api.github.com/repos/TheQuantifier/VideoToScreensaver/releases/latest"
+RELEASES_PAGE_URL = "https://github.com/TheQuantifier/VideoToScreensaver/releases/latest"
 DEFAULT_THRESHOLD = 15
 DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_FIT_MODE = "contain"
@@ -256,6 +263,103 @@ def normalize_screensaver_args(argv: list[str]) -> str:
     if first.startswith("/p"):
         return "preview"
     return "gui"
+
+
+def parse_version_tuple(value: str) -> tuple[int, ...]:
+    nums = [int(part) for part in re.findall(r"\d+", value)]
+    return tuple(nums) if nums else (0,)
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    latest_parts = list(parse_version_tuple(latest))
+    current_parts = list(parse_version_tuple(current))
+    max_len = max(len(latest_parts), len(current_parts))
+    latest_parts.extend([0] * (max_len - len(latest_parts)))
+    current_parts.extend([0] * (max_len - len(current_parts)))
+    return tuple(latest_parts) > tuple(current_parts)
+
+
+def fetch_latest_release_info() -> dict[str, str]:
+    req = urllib.request.Request(
+        UPDATE_API_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    tag_name = str(payload.get("tag_name", "")).strip()
+    latest_version = tag_name.lstrip("vV")
+    html_url = str(payload.get("html_url", "")).strip() or RELEASES_PAGE_URL
+
+    zip_url = ""
+    for asset in payload.get("assets", []):
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name", "")).lower()
+        if name == f"{APP_NAME.lower()}.zip":
+            zip_url = str(asset.get("browser_download_url", "")).strip()
+            break
+    if not zip_url:
+        for asset in payload.get("assets", []):
+            if not isinstance(asset, dict):
+                continue
+            name = str(asset.get("name", "")).lower()
+            if name.endswith(".zip"):
+                zip_url = str(asset.get("browser_download_url", "")).strip()
+                break
+
+    return {
+        "version": latest_version,
+        "zip_url": zip_url,
+        "html_url": html_url,
+    }
+
+
+def download_file(url: str, destination: Path) -> None:
+    req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+    with urllib.request.urlopen(req, timeout=60) as response, destination.open("wb") as out:
+        shutil.copyfileobj(response, out)
+
+
+def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int) -> None:
+    def ps_quote(text: str) -> str:
+        return text.replace("'", "''")
+
+    script_path = APP_DIR / "run_update.ps1"
+    script = (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$pidToWait = {current_pid}\n"
+        f"$zipPath = '{ps_quote(str(zip_path))}'\n"
+        f"$installDir = '{ps_quote(str(install_dir))}'\n"
+        "$exePath = Join-Path $installDir 'VideoToScreensaver.exe'\n"
+        "$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('VideoToScreensaverUpdate_' + [Guid]::NewGuid())\n"
+        "for ($i = 0; $i -lt 240; $i++) {\n"
+        "  if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }\n"
+        "  Start-Sleep -Milliseconds 500\n"
+        "}\n"
+        "New-Item -Path $tempDir -ItemType Directory -Force | Out-Null\n"
+        "Expand-Archive -Path $zipPath -DestinationPath $tempDir -Force\n"
+        "Copy-Item -Path (Join-Path $tempDir '*') -Destination $installDir -Recurse -Force\n"
+        "Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue\n"
+        "Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue\n"
+        "Start-Process -FilePath $exePath\n"
+    )
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+        ],
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+    )
 
 
 def render_frame(frame: np.ndarray, screen_w: int, screen_h: int, fit_mode: str) -> np.ndarray:
@@ -507,9 +611,14 @@ def sync_onedir_runtime_assets(source_exe: Path) -> None:
         try:
             if item.is_dir():
                 if target.exists():
-                    shutil.rmtree(target)
+                    if target.is_dir():
+                        shutil.rmtree(target)
+                    else:
+                        target.unlink()
                 shutil.copytree(item, target)
             else:
+                if target.exists() and target.is_dir():
+                    shutil.rmtree(target)
                 shutil.copy2(item, target)
         except PermissionError:
             # Keep existing runtime assets when files are locked by an active screensaver process.
@@ -690,6 +799,91 @@ def launch_gui() -> None:
     def open_settings() -> None:
         open_screen_saver_settings()
 
+    def update_app() -> None:
+        if not getattr(sys, "frozen", False):
+            messagebox.showinfo(
+                "VideoToScreensaver",
+                "Updater is only available in the built .exe.\nRun from release build or installer package.",
+            )
+            return
+
+        install_dir = Path(sys.executable).parent
+        test_file = install_dir / ".vts_update_check.tmp"
+        try:
+            test_file.write_text("ok", encoding="utf-8")
+            test_file.unlink(missing_ok=True)
+        except OSError:
+            messagebox.showerror(
+                "VideoToScreensaver",
+                "Install folder is not writable.\nRun the app as administrator to update in place.",
+            )
+            return
+
+        status_var.set("Checking for updates...")
+        root.update_idletasks()
+        try:
+            release = fetch_latest_release_info()
+        except urllib.error.URLError as exc:
+            status_var.set("Update check failed.")
+            messagebox.showerror("VideoToScreensaver", f"Could not check updates:\n{exc}")
+            return
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            status_var.set("Update check failed.")
+            messagebox.showerror("VideoToScreensaver", f"Invalid update response:\n{exc}")
+            return
+
+        latest_version = release.get("version", "").strip()
+        zip_url = release.get("zip_url", "").strip()
+        html_url = release.get("html_url", RELEASES_PAGE_URL).strip() or RELEASES_PAGE_URL
+
+        if not latest_version:
+            status_var.set("Update check failed.")
+            messagebox.showerror("VideoToScreensaver", "Could not determine latest version from GitHub.")
+            return
+
+        if not is_newer_version(latest_version, APP_VERSION):
+            status_var.set("App is up to date.")
+            messagebox.showinfo(
+                "VideoToScreensaver",
+                f"You're up to date.\nCurrent: {APP_VERSION}\nLatest: {latest_version}",
+            )
+            return
+
+        if not zip_url:
+            status_var.set("Update available.")
+            messagebox.showinfo(
+                "VideoToScreensaver",
+                f"Update {latest_version} is available.\nNo zip asset found, opening release page.",
+            )
+            webbrowser.open(html_url)
+            return
+
+        if not messagebox.askyesno(
+            "Update available",
+            f"Update from {APP_VERSION} to {latest_version} now?\n\n"
+            "The app will close, update files, then restart.",
+        ):
+            status_var.set("Update canceled.")
+            return
+
+        update_zip = APP_DIR / f"{APP_NAME}-{latest_version}.zip"
+        try:
+            status_var.set(f"Downloading update {latest_version}...")
+            root.update_idletasks()
+            download_file(zip_url, update_zip)
+            launch_self_update(update_zip, install_dir, os.getpid())
+        except Exception as exc:
+            status_var.set("Update failed.")
+            messagebox.showerror("VideoToScreensaver", f"Update failed:\n{exc}")
+            return
+
+        status_var.set("Updater started. Closing app...")
+        messagebox.showinfo(
+            "VideoToScreensaver",
+            "Updater started.\nThe app will close now and reopen after updating.",
+        )
+        root.destroy()
+
     def refresh_screensaver_list() -> None:
         nonlocal screensaver_items
         screensaver_items = list_managed_screensavers()
@@ -821,6 +1015,7 @@ def launch_gui() -> None:
     tk.Button(buttons, text="Install as Screensaver", command=install_screensaver, width=24).pack(side="left")
     tk.Button(buttons, text="Preview Now", command=preview_now, width=16).pack(side="left", padx=(8, 0))
     tk.Button(buttons, text="Open Screen Saver Settings", command=open_settings, width=24).pack(side="left", padx=(8, 0))
+    tk.Button(buttons, text="Update App", command=update_app, width=12).pack(side="left", padx=(8, 0))
 
     tk.Label(frame, textvariable=status_var, fg="#0a4d24", wraplength=620, justify="left").pack(anchor="w", pady=(0, 8))
 
