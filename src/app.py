@@ -20,7 +20,8 @@ import numpy as np
 
 
 APP_NAME = "VideoToScreensaver"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
+APP_DISPLAY_NAME = f"{APP_NAME} v{APP_VERSION}"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 SCR_NAME = f"{APP_NAME}.scr"
 CONFIG_NAME = "config.json"
@@ -688,7 +689,7 @@ def open_screen_saver_settings() -> None:
 
 def launch_gui() -> None:
     root = tk.Tk()
-    root.title("VideoToScreensaver")
+    root.title(APP_DISPLAY_NAME)
     root.geometry("760x620")
     root.resizable(False, False)
     icon_path = get_resource_path("assets/vts_icon.ico")
@@ -979,7 +980,7 @@ def launch_gui() -> None:
     frame = tk.Frame(root, padx=20, pady=20)
     frame.pack(fill="both", expand=True)
 
-    tk.Label(frame, text="Video To Screensaver", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+    tk.Label(frame, text=APP_DISPLAY_NAME, font=("Segoe UI", 18, "bold")).pack(anchor="w")
     tk.Label(
         frame,
         text="Choose a video and install it as your active Windows screensaver.",
