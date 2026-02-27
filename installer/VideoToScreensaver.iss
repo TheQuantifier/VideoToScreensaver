@@ -1,7 +1,7 @@
 [Setup]
 AppId={{9B3E3D47-6C94-4E5A-9C2A-6F5646A55C58}
 AppName=VideoToScreensaver
-AppVersion=1.0.0
+AppVersion=1.1.0
 AppPublisher=ManusWebworks
 DefaultDirName={autopf}\VideoToScreensaver
 DefaultGroupName=VideoToScreensaver

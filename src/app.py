@@ -24,6 +24,8 @@ DEFAULT_THRESHOLD = 15
 DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_FIT_MODE = "contain"
 VALID_FIT_MODES = {"contain", "cover", "stretch"}
+DEFAULT_STARTUP_TRANSITION = "none"
+VALID_STARTUP_TRANSITIONS = {"none", "fade", "wipe_left", "wipe_down", "zoom_in"}
 
 
 class MONITORINFO(ctypes.Structure):
@@ -77,6 +79,31 @@ def get_monitor_rects() -> list[tuple[int, int, int, int]]:
     user32.EnumDisplayMonitors(0, 0, monitor_enum_proc(callback), 0)
     monitors.sort(key=lambda m: (-m[4], m[0], m[1]))
     return [(m[0], m[1], m[2], m[3]) for m in monitors]
+
+
+def get_wallpaper_frame() -> np.ndarray | None:
+    SPI_GETDESKWALLPAPER = 0x0073
+    buf = ctypes.create_unicode_buffer(1024)
+    wallpaper_path: Path | None = None
+
+    if ctypes.windll.user32.SystemParametersInfoW(SPI_GETDESKWALLPAPER, len(buf), buf, 0):
+        candidate = Path(buf.value.strip())
+        if candidate.is_file():
+            wallpaper_path = candidate
+
+    if wallpaper_path is None:
+        appdata = Path(os.environ.get("APPDATA", str(Path.home())))
+        transcoded = appdata / "Microsoft" / "Windows" / "Themes" / "TranscodedWallpaper"
+        if transcoded.is_file():
+            wallpaper_path = transcoded
+
+    if wallpaper_path is None:
+        return None
+
+    wallpaper = cv2.imread(str(wallpaper_path), cv2.IMREAD_COLOR)
+    if wallpaper is None or wallpaper.size == 0:
+        return None
+    return wallpaper
 
 
 def get_resource_path(relative_path: str) -> Path:
@@ -187,6 +214,7 @@ def write_config(
     mouse_threshold: int,
     timeout_seconds: int,
     fit_mode: str,
+    startup_transition: str,
     scr_path: Path,
 ) -> None:
     config = read_config()
@@ -194,6 +222,7 @@ def write_config(
     config["mouse_move_threshold"] = mouse_threshold
     config["timeout_seconds"] = timeout_seconds
     config["fit_mode"] = fit_mode
+    config["startup_transition"] = startup_transition
     config["scr_path"] = str(scr_path)
     upsert_managed_entry(config, scr_path, video_path)
     save_config(config)
@@ -254,7 +283,49 @@ def render_frame(frame: np.ndarray, screen_w: int, screen_h: int, fit_mode: str)
     return canvas
 
 
-def run_fullscreen_video(video_path: Path, mouse_threshold: int, fit_mode: str) -> None:
+def render_transition_frame(
+    backdrop: np.ndarray,
+    target: np.ndarray,
+    transition_mode: str,
+    alpha: float,
+) -> np.ndarray:
+    if alpha >= 1.0 or transition_mode == "none":
+        return target
+
+    if transition_mode == "fade":
+        return cv2.addWeighted(backdrop, 1.0 - alpha, target, alpha, 0.0)
+
+    h, w = target.shape[:2]
+    out = backdrop.copy()
+
+    if transition_mode == "wipe_left":
+        x = max(1, min(w, int(w * alpha)))
+        out[:, :x] = target[:, :x]
+        return out
+
+    if transition_mode == "wipe_down":
+        y = max(1, min(h, int(h * alpha)))
+        out[:y, :] = target[:y, :]
+        return out
+
+    if transition_mode == "zoom_in":
+        vis_w = max(1, min(w, int(w * alpha)))
+        vis_h = max(1, min(h, int(h * alpha)))
+        resized = cv2.resize(target, (vis_w, vis_h), interpolation=cv2.INTER_LINEAR)
+        x0 = (w - vis_w) // 2
+        y0 = (h - vis_h) // 2
+        out[y0 : y0 + vis_h, x0 : x0 + vis_w] = resized
+        return out
+
+    return target
+
+
+def run_fullscreen_video(
+    video_path: Path,
+    mouse_threshold: int,
+    fit_mode: str,
+    startup_transition: str,
+) -> None:
     if not video_path.is_file():
         show_message("VideoToScreensaver", f"Video not found:\n{video_path}")
         return
@@ -285,12 +356,40 @@ def run_fullscreen_video(video_path: Path, mouse_threshold: int, fit_mode: str) 
         windows.append((window_name, width, height))
 
     first_cache: dict[tuple[int, int], np.ndarray] = {}
+    backdrop_cache: dict[tuple[int, int], np.ndarray] = {}
+    wallpaper = get_wallpaper_frame()
     for window_name, screen_w, screen_h in windows:
         key_dims = (screen_w, screen_h)
         if key_dims not in first_cache:
             first_cache[key_dims] = render_frame(first_frame, screen_w, screen_h, fit_mode)
-        cv2.imshow(window_name, first_cache[key_dims])
+        if key_dims not in backdrop_cache:
+            if wallpaper is None:
+                backdrop_cache[key_dims] = np.zeros((screen_h, screen_w, 3), dtype=np.uint8)
+            else:
+                backdrop_cache[key_dims] = render_frame(wallpaper, screen_w, screen_h, "cover")
+        cv2.imshow(window_name, backdrop_cache[key_dims])
     cv2.waitKey(1)
+
+    transition_steps = [1.0]
+    if startup_transition != "none":
+        transition_steps = [0.18, 0.36, 0.54, 0.72, 0.86, 1.0]
+
+    for alpha in transition_steps:
+        blended_cache: dict[tuple[int, int], np.ndarray] = {}
+        for window_name, screen_w, screen_h in windows:
+            key_dims = (screen_w, screen_h)
+            if key_dims not in blended_cache:
+                blended_cache[key_dims] = render_transition_frame(
+                    backdrop_cache[key_dims],
+                    first_cache[key_dims],
+                    startup_transition,
+                    alpha,
+                )
+            frame_to_show = blended_cache[key_dims]
+            cv2.imshow(window_name, frame_to_show)
+        cv2.waitKey(1)
+        if alpha < 1.0:
+            time.sleep(0.03)
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps <= 1 or fps > 240:
@@ -451,6 +550,7 @@ def install_from_gui(
     mouse_threshold: int,
     timeout_seconds: int,
     fit_mode: str,
+    startup_transition: str,
 ) -> tuple[Path, Path]:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     video_destination = APP_DIR / source_video.name
@@ -468,7 +568,7 @@ def install_from_gui(
     scr_path = APP_DIR / scr_name
     scr_path = copy_with_lock_fallback(current_exe, scr_path)
 
-    write_config(video_destination, mouse_threshold, timeout_seconds, fit_mode, scr_path)
+    write_config(video_destination, mouse_threshold, timeout_seconds, fit_mode, startup_transition, scr_path)
     apply_registry_settings(scr_path, timeout_seconds)
     return scr_path, video_destination
 
@@ -493,6 +593,7 @@ def launch_gui() -> None:
     threshold_var = tk.StringVar(value=str(DEFAULT_THRESHOLD))
     timeout_var = tk.StringVar(value=str(DEFAULT_TIMEOUT_SECONDS))
     fit_mode_var = tk.StringVar(value=DEFAULT_FIT_MODE)
+    startup_transition_var = tk.StringVar(value=DEFAULT_STARTUP_TRANSITION)
     status_var = tk.StringVar(value="Select a video, then click 'Install as Screensaver'.")
     screensaver_items: list[Path] = []
 
@@ -504,6 +605,10 @@ def launch_gui() -> None:
     timeout_var.set(str(existing.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)))
     existing_fit_mode = str(existing.get("fit_mode", DEFAULT_FIT_MODE)).lower()
     fit_mode_var.set(existing_fit_mode if existing_fit_mode in VALID_FIT_MODES else DEFAULT_FIT_MODE)
+    existing_transition = str(existing.get("startup_transition", DEFAULT_STARTUP_TRANSITION)).lower()
+    startup_transition_var.set(
+        existing_transition if existing_transition in VALID_STARTUP_TRANSITIONS else DEFAULT_STARTUP_TRANSITION
+    )
 
     def browse_video() -> None:
         file_path = filedialog.askopenfilename(
@@ -539,9 +644,18 @@ def launch_gui() -> None:
         if fit_mode not in VALID_FIT_MODES:
             messagebox.showerror("VideoToScreensaver", "Invalid fit mode. Choose Contain, Cover, or Stretch.")
             return
+        startup_transition = startup_transition_var.get().strip().lower()
+        if startup_transition not in VALID_STARTUP_TRANSITIONS:
+            messagebox.showerror(
+                "VideoToScreensaver",
+                "Invalid startup transition. Choose none, fade, wipe_left, wipe_down, or zoom_in.",
+            )
+            return
 
         try:
-            scr_path, copied_video = install_from_gui(video_path, threshold, timeout_seconds, fit_mode)
+            scr_path, copied_video = install_from_gui(
+                video_path, threshold, timeout_seconds, fit_mode, startup_transition
+            )
         except Exception as exc:
             messagebox.showerror("VideoToScreensaver", str(exc))
             return
@@ -693,6 +807,14 @@ def launch_gui() -> None:
     fit_mode_menu = tk.OptionMenu(options_row, fit_mode_var, "contain", "cover", "stretch")
     fit_mode_menu.config(width=10)
     fit_mode_menu.grid(row=1, column=1, sticky="w", pady=(10, 0))
+    tk.Label(options_row, text="Startup transition:", width=16, anchor="w").grid(
+        row=1, column=2, padx=(20, 0), sticky="w", pady=(10, 0)
+    )
+    startup_transition_menu = tk.OptionMenu(
+        options_row, startup_transition_var, "none", "fade", "wipe_left", "wipe_down", "zoom_in"
+    )
+    startup_transition_menu.config(width=12)
+    startup_transition_menu.grid(row=1, column=3, sticky="w", pady=(10, 0))
 
     buttons = tk.Frame(frame)
     buttons.pack(fill="x", pady=(4, 12))
@@ -738,11 +860,19 @@ def main() -> None:
     if mode == "screensaver":
         config = read_config()
         video_path = Path(config.get("video_path", ""))
-        mouse_threshold = int(config.get("mouse_move_threshold", DEFAULT_THRESHOLD))
+        try:
+            mouse_threshold = int(config.get("mouse_move_threshold", DEFAULT_THRESHOLD))
+        except (TypeError, ValueError):
+            mouse_threshold = DEFAULT_THRESHOLD
+        if mouse_threshold < 1:
+            mouse_threshold = DEFAULT_THRESHOLD
         fit_mode = str(config.get("fit_mode", DEFAULT_FIT_MODE)).lower()
         if fit_mode not in VALID_FIT_MODES:
             fit_mode = DEFAULT_FIT_MODE
-        run_fullscreen_video(video_path, mouse_threshold, fit_mode)
+        startup_transition = str(config.get("startup_transition", DEFAULT_STARTUP_TRANSITION)).lower()
+        if startup_transition not in VALID_STARTUP_TRANSITIONS:
+            startup_transition = DEFAULT_STARTUP_TRANSITION
+        run_fullscreen_video(video_path, mouse_threshold, fit_mode, startup_transition)
         return
 
     if mode == "preview":

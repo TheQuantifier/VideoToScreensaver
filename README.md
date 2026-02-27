@@ -54,6 +54,7 @@ Output:
    - `Mouse move threshold`
    - `Timeout seconds`
    - `Video fit` (`contain`, `cover`, `stretch`)
+   - `Startup transition` (`none`, `fade`, `wipe_left`, `wipe_down`, `zoom_in`)
 4. Click `Install as Screensaver`.
 5. Click `Open Screen Saver Settings`.
 6. Confirm `"<yourfilename>_vts.scr"` is selected, set idle wait, click `Apply`.
@@ -66,7 +67,7 @@ If you used the installer, users can launch from Start Menu shortcut: `VideoToSc
 
 ## Notes
 - The app stores files in `%LOCALAPPDATA%\VideoToScreensaver`.
-- During install, the app copies itself to `%LOCALAPPDATA%\VideoToScreensaver\VideoToScreensaver.scr`.
+- During install, the app copies itself to `%LOCALAPPDATA%\VideoToScreensaver\<yourfilename>_vts.scr`.
 - Build now uses `PyInstaller --onedir` for faster startup compared to onefile extraction.
 - H.264 `.mp4` is the most compatible format.
 - If it exits too fast, increase `Mouse move threshold`.
