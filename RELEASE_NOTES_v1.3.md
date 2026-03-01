@@ -1,8 +1,13 @@
 # VideoToScreensaver v1.3
 
-## Windows Installer
+## Windows Installer (If you don't have the app)
 - Download `VideoToScreensaver-Setup.exe` from this release.
 - Run the installer and launch `VideoToScreensaver` from Start Menu.
+
+## Windows Updater (If you already have the app)
+- Open the app
+- Select `Update App`
+- Wait for new update to be installed
 
 ## Updates
 - Reworked the app UI to use themed `ttk` controls and grouped sections for cleaner layout.
