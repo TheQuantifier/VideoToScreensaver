@@ -4,20 +4,25 @@ This project is for **Windows only**.
 
 VideoToScreensaver lets you turn your own video files into a real Windows screensaver with a simple UI. It supports one-click install, per-screen video fit modes (`contain`, `cover`, `stretch`) including multi-monitor playback, quick preview, and built-in management for removing old app-created screensavers.
 
-Use the standalone installer to install the app quickly:
-
-1. Download `VideoToScreensaver-Setup.exe` from the latest GitHub Release.
-2. Run the installer.
-3. Launch `VideoToScreensaver` from Start Menu.
-
-The app lets you pick a video file, install it as a screensaver, and then open Screen Saver settings to enable or verify it.
-
 ## What you get
 - A GUI executable (`VideoToScreensaver.exe`).
 - In-app video picker.
 - One-click install as active screensaver.
 - Built-in steps for what to do next in Windows settings.
 - Fullscreen video playback in screensaver mode (`/s`).
+
+## Install or Update
+### New install
+1. Download `VideoToScreensaver-Setup.exe` from the latest GitHub Release.
+2. Run the installer.
+3. Launch `VideoToScreensaver` from Start Menu.
+
+### Update existing app
+1. Open `VideoToScreensaver`.
+2. Click `Update App`.
+3. Confirm the update prompt and let the app restart after update completes.
+
+If in-app update cannot write to the install folder, run the app as administrator and try `Update App` again, or install the latest `VideoToScreensaver-Setup.exe` over your current install.
 
 ## 1) Setup in VS Code (for building from source)
 
@@ -58,7 +63,6 @@ Output:
 4. Click `Install as Screensaver`.
 5. Click `Open Screen Saver Settings`.
 6. Confirm `"<yourfilename>_vts.scr"` is selected, set idle wait, click `Apply`.
-7. Use `Update App` to download and apply the latest GitHub release in place (no reinstall needed).
 
 The app also includes a `Managed screensavers` section where you can:
 - list all `.scr` files created by this app
