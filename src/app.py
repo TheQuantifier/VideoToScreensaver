@@ -14,13 +14,18 @@ from ctypes import wintypes
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from tkinter import ttk
 
 import cv2
 import numpy as np
 
+try:
+    from version import APP_VERSION
+except ModuleNotFoundError:
+    from src.version import APP_VERSION
+
 
 APP_NAME = "VideoToScreensaver"
-APP_VERSION = "1.2.0"
 APP_DISPLAY_NAME = f"{APP_NAME} v{APP_VERSION}"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 SCR_NAME = f"{APP_NAME}.scr"
@@ -325,7 +330,7 @@ def download_file(url: str, destination: Path) -> None:
         shutil.copyfileobj(response, out)
 
 
-def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int) -> None:
+def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int, require_admin: bool = False) -> None:
     def ps_quote(text: str) -> str:
         return text.replace("'", "''")
 
@@ -350,6 +355,28 @@ def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int) -> N
     )
     APP_DIR.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script, encoding="utf-8")
+    if require_admin:
+        args = subprocess.list2cmdline(
+            [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ]
+        )
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            "powershell.exe",
+            args,
+            None,
+            1,
+        )
+        if result <= 32:
+            raise OSError(f"Could not start elevated updater (ShellExecuteW code {result}).")
+        return
+
     subprocess.Popen(
         [
             "powershell.exe",
@@ -690,7 +717,8 @@ def open_screen_saver_settings() -> None:
 def launch_gui() -> None:
     root = tk.Tk()
     root.title(APP_DISPLAY_NAME)
-    root.geometry("760x620")
+    root.geometry("920x700")
+    root.minsize(900, 660)
     root.resizable(False, False)
     icon_path = get_resource_path("assets/vts_icon.ico")
     if icon_path.is_file():
@@ -699,9 +727,19 @@ def launch_gui() -> None:
         except Exception:
             pass
 
+    style = ttk.Style(root)
+    for theme in ("vista", "xpnative", "winnative", "clam"):
+        if theme in style.theme_names():
+            style.theme_use(theme)
+            break
+    style.configure(".", font=("Segoe UI", 10))
+    style.configure("TLabelframe.Label", font=("Segoe UI", 10))
+    style.configure("Status.TLabel", foreground="#0f6c3e")
+
     selected_video = tk.StringVar(value="")
     threshold_var = tk.StringVar(value=str(DEFAULT_THRESHOLD))
     timeout_var = tk.StringVar(value=str(DEFAULT_TIMEOUT_SECONDS))
+    timeout_minutes_var = tk.StringVar(value="5")
     fit_mode_var = tk.StringVar(value=DEFAULT_FIT_MODE)
     startup_transition_var = tk.StringVar(value=DEFAULT_STARTUP_TRANSITION)
     status_var = tk.StringVar(value="Select a video, then click 'Install as Screensaver'.")
@@ -713,6 +751,10 @@ def launch_gui() -> None:
         selected_video.set(existing_video)
     threshold_var.set(str(existing.get("mouse_move_threshold", DEFAULT_THRESHOLD)))
     timeout_var.set(str(existing.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)))
+    try:
+        timeout_minutes_var.set(str(max(int(int(timeout_var.get()) / 60), 1)))
+    except (TypeError, ValueError):
+        timeout_minutes_var.set(str(max(int(DEFAULT_TIMEOUT_SECONDS / 60), 1)))
     existing_fit_mode = str(existing.get("fit_mode", DEFAULT_FIT_MODE)).lower()
     fit_mode_var.set(existing_fit_mode if existing_fit_mode in VALID_FIT_MODES else DEFAULT_FIT_MODE)
     existing_transition = str(existing.get("startup_transition", DEFAULT_STARTUP_TRANSITION)).lower()
@@ -732,35 +774,37 @@ def launch_gui() -> None:
             selected_video.set(file_path)
             status_var.set("Video selected. Install to set it as your active screensaver.")
 
-    def install_screensaver() -> None:
+    def install_screensaver() -> bool:
         video_path = Path(selected_video.get().strip())
         if not video_path.is_file():
             messagebox.showerror("VideoToScreensaver", "Pick a valid video file first.")
-            return
+            return False
 
         try:
             threshold = int(threshold_var.get().strip())
-            timeout_seconds = int(timeout_var.get().strip())
+            timeout_minutes = int(timeout_minutes_var.get().strip())
+            timeout_seconds = timeout_minutes * 60
+            timeout_var.set(str(timeout_seconds))
             if threshold < 1 or timeout_seconds < 30:
                 raise ValueError
         except ValueError:
             messagebox.showerror(
                 "VideoToScreensaver",
-                "Mouse threshold must be >= 1 and timeout seconds must be >= 30.",
+                "Mouse threshold must be >= 1 and wait minutes must be >= 1.",
             )
-            return
+            return False
 
         fit_mode = fit_mode_var.get().strip().lower()
         if fit_mode not in VALID_FIT_MODES:
             messagebox.showerror("VideoToScreensaver", "Invalid fit mode. Choose Contain, Cover, or Stretch.")
-            return
+            return False
         startup_transition = startup_transition_var.get().strip().lower()
         if startup_transition not in VALID_STARTUP_TRANSITIONS:
             messagebox.showerror(
                 "VideoToScreensaver",
                 "Invalid startup transition. Choose none, fade, wipe_left, wipe_down, or zoom_in.",
             )
-            return
+            return False
 
         try:
             scr_path, copied_video = install_from_gui(
@@ -768,7 +812,7 @@ def launch_gui() -> None:
             )
         except Exception as exc:
             messagebox.showerror("VideoToScreensaver", str(exc))
-            return
+            return False
 
         status_var.set(
             "Installed successfully. Next: click 'Open Screen Saver Settings', verify selection, then Apply."
@@ -784,6 +828,7 @@ def launch_gui() -> None:
             "3) Set wait time and click Apply",
         )
         refresh_screensaver_list()
+        return True
 
     def preview_now() -> None:
         config = read_config()
@@ -810,15 +855,12 @@ def launch_gui() -> None:
 
         install_dir = Path(sys.executable).parent
         test_file = install_dir / ".vts_update_check.tmp"
+        require_admin = False
         try:
             test_file.write_text("ok", encoding="utf-8")
             test_file.unlink(missing_ok=True)
         except OSError:
-            messagebox.showerror(
-                "VideoToScreensaver",
-                "Install folder is not writable.\nRun the app as administrator to update in place.",
-            )
-            return
+            require_admin = True
 
         status_var.set("Checking for updates...")
         root.update_idletasks()
@@ -872,7 +914,10 @@ def launch_gui() -> None:
             status_var.set(f"Downloading update {latest_version}...")
             root.update_idletasks()
             download_file(zip_url, update_zip)
-            launch_self_update(update_zip, install_dir, os.getpid())
+            if require_admin:
+                status_var.set("Starting elevated updater (UAC prompt)...")
+                root.update_idletasks()
+            launch_self_update(update_zip, install_dir, os.getpid(), require_admin=require_admin)
         except Exception as exc:
             status_var.set("Update failed.")
             messagebox.showerror("VideoToScreensaver", f"Update failed:\n{exc}")
@@ -977,48 +1022,79 @@ def launch_gui() -> None:
         status_var.set("Deleted active screensaver file and cleaned up video if unused.")
         refresh_screensaver_list()
 
-    frame = tk.Frame(root, padx=20, pady=20)
+    frame = ttk.Frame(root, padding=(12, 10, 12, 10))
     frame.pack(fill="both", expand=True)
 
-    tk.Label(frame, text=APP_DISPLAY_NAME, font=("Segoe UI", 18, "bold")).pack(anchor="w")
-    tk.Label(
-        frame,
-        text="Choose a video and install it as your active Windows screensaver.",
-        font=("Segoe UI", 10),
-    ).pack(anchor="w", pady=(6, 14))
+    content = ttk.Frame(frame)
+    content.pack(fill="both", expand=True, pady=(0, 8))
 
-    path_row = tk.Frame(frame)
-    path_row.pack(fill="x", pady=(0, 10))
-    tk.Entry(path_row, textvariable=selected_video, font=("Segoe UI", 10)).pack(side="left", fill="x", expand=True)
-    tk.Button(path_row, text="Browse", command=browse_video, width=10).pack(side="left", padx=(8, 0))
+    source_group = ttk.LabelFrame(content, text="Video source", padding=(10, 8, 10, 8))
+    source_group.pack(fill="x", pady=(0, 8))
 
-    options_row = tk.Frame(frame)
-    options_row.pack(fill="x", pady=(0, 12))
-    tk.Label(options_row, text="Mouse move threshold:", width=22, anchor="w").grid(row=0, column=0, sticky="w")
-    tk.Entry(options_row, textvariable=threshold_var, width=8).grid(row=0, column=1, sticky="w")
-    tk.Label(options_row, text="Timeout seconds:", width=16, anchor="w").grid(row=0, column=2, padx=(20, 0), sticky="w")
-    tk.Entry(options_row, textvariable=timeout_var, width=8).grid(row=0, column=3, sticky="w")
-    tk.Label(options_row, text="Video fit:", width=10, anchor="w").grid(row=1, column=0, sticky="w", pady=(10, 0))
-    fit_mode_menu = tk.OptionMenu(options_row, fit_mode_var, "contain", "cover", "stretch")
-    fit_mode_menu.config(width=10)
-    fit_mode_menu.grid(row=1, column=1, sticky="w", pady=(10, 0))
-    tk.Label(options_row, text="Startup transition:", width=16, anchor="w").grid(
-        row=1, column=2, padx=(20, 0), sticky="w", pady=(10, 0)
+    path_row = ttk.Frame(source_group)
+    path_row.pack(fill="x")
+    ttk.Entry(path_row, textvariable=selected_video).pack(side="left", fill="x", expand=True)
+    ttk.Button(path_row, text="Browse...", command=browse_video, width=12).pack(side="left", padx=(8, 0))
+
+    screen_saver_group = ttk.LabelFrame(content, text="Screen saver", padding=(10, 8, 10, 8))
+    screen_saver_group.pack(fill="x", pady=(0, 8))
+
+    screen_saver_group.columnconfigure(0, weight=1)
+
+    controls_row = ttk.Frame(screen_saver_group)
+    controls_row.grid(row=0, column=0, sticky="ew")
+    controls_row.columnconfigure(0, weight=1)
+    controls_row.columnconfigure(1, weight=1)
+    controls_row.columnconfigure(2, weight=0)
+
+    fit_row = ttk.Frame(controls_row)
+    fit_row.grid(row=0, column=0, sticky="w")
+    ttk.Label(fit_row, text="Video fit:").pack(side="left")
+    fit_mode_menu = ttk.Combobox(
+        fit_row,
+        textvariable=fit_mode_var,
+        values=("contain", "cover", "stretch"),
+        width=14,
+        state="readonly",
     )
-    startup_transition_menu = tk.OptionMenu(
-        options_row, startup_transition_var, "none", "fade", "wipe_left", "wipe_down", "zoom_in"
+    fit_mode_menu.pack(side="left", padx=(6, 0))
+
+    transition_row = ttk.Frame(controls_row)
+    transition_row.grid(row=0, column=1, sticky="w", padx=(12, 0))
+    ttk.Label(transition_row, text="Startup transition:").pack(side="left")
+    startup_transition_menu = ttk.Combobox(
+        transition_row,
+        textvariable=startup_transition_var,
+        values=("none", "fade", "wipe_left", "wipe_down", "zoom_in"),
+        width=14,
+        state="readonly",
     )
-    startup_transition_menu.config(width=12)
-    startup_transition_menu.grid(row=1, column=3, sticky="w", pady=(10, 0))
+    startup_transition_menu.pack(side="left", padx=(6, 0))
 
-    buttons = tk.Frame(frame)
-    buttons.pack(fill="x", pady=(4, 12))
-    tk.Button(buttons, text="Install as Screensaver", command=install_screensaver, width=24).pack(side="left")
-    tk.Button(buttons, text="Preview Now", command=preview_now, width=16).pack(side="left", padx=(8, 0))
-    tk.Button(buttons, text="Open Screen Saver Settings", command=open_settings, width=24).pack(side="left", padx=(8, 0))
-    tk.Button(buttons, text="Update App", command=update_app, width=12).pack(side="left", padx=(8, 0))
+    action_row = ttk.Frame(controls_row)
+    action_row.grid(row=0, column=2, sticky="e", padx=(12, 0))
+    ttk.Button(action_row, text="Settings...", command=open_settings, width=12).pack(side="left")
+    ttk.Button(action_row, text="Preview", command=preview_now, width=10).pack(side="left", padx=(8, 0))
 
-    tk.Label(frame, textvariable=status_var, fg="#0a4d24", wraplength=620, justify="left").pack(anchor="w", pady=(0, 8))
+    timing_row = ttk.Frame(screen_saver_group)
+    timing_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+    timing_row.columnconfigure(0, weight=1)
+    timing_row.columnconfigure(1, weight=1)
+
+    wait_row = ttk.Frame(timing_row)
+    wait_row.grid(row=0, column=0, sticky="w")
+    ttk.Label(wait_row, text="Wait:").pack(side="left")
+    ttk.Spinbox(wait_row, from_=1, to=1440, textvariable=timeout_minutes_var, width=6).pack(side="left", padx=(6, 0))
+    ttk.Label(wait_row, text="minutes").pack(side="left", padx=(6, 0))
+
+    threshold_row = ttk.Frame(timing_row)
+    threshold_row.grid(row=0, column=1, sticky="e")
+    ttk.Label(threshold_row, text="Mouse threshold:").pack(side="left")
+    ttk.Entry(threshold_row, textvariable=threshold_var, width=7).pack(side="left", padx=(6, 0))
+
+    info_group = ttk.LabelFrame(content, text="Status and instructions", padding=(10, 8, 10, 8))
+    info_group.pack(fill="x", pady=(0, 8))
+    ttk.Label(info_group, textvariable=status_var, style="Status.TLabel", wraplength=840, justify="left").pack(anchor="w")
 
     steps_text = (
         "After installing:\n"
@@ -1027,23 +1103,53 @@ def launch_gui() -> None:
         "3) Set 'Wait' to your preferred idle time.\n"
         "4) Click Apply, then OK."
     )
-    tk.Label(frame, text=steps_text, justify="left", font=("Segoe UI", 10)).pack(anchor="w")
+    ttk.Label(info_group, text=steps_text, justify="left").pack(anchor="w", pady=(8, 0))
 
-    managed_frame = tk.LabelFrame(frame, text="Managed screensavers", padx=10, pady=10)
-    managed_frame.pack(fill="both", expand=True, pady=(12, 0))
+    managed_group = ttk.LabelFrame(content, text="Managed screensavers", padding=(10, 8, 10, 8))
+    managed_group.pack(fill="both", expand=True)
 
-    managed_buttons = tk.Frame(managed_frame)
+    managed_buttons = ttk.Frame(managed_group)
     managed_buttons.pack(fill="x", pady=(0, 8))
-    tk.Button(managed_buttons, text="Refresh", command=refresh_screensaver_list, width=12).pack(side="left")
-    tk.Button(managed_buttons, text="Delete Active", command=delete_active_screensaver, width=14).pack(
+    ttk.Button(managed_buttons, text="Refresh", command=refresh_screensaver_list, width=11).pack(side="left")
+    ttk.Button(managed_buttons, text="Delete active", command=delete_active_screensaver, width=13).pack(
         side="left", padx=(8, 0)
     )
-    tk.Button(managed_buttons, text="Delete selected", command=delete_selected_screensaver, width=16).pack(
+    ttk.Button(managed_buttons, text="Delete selected", command=delete_selected_screensaver, width=16).pack(
         side="left", padx=(8, 0)
     )
+    ttk.Button(managed_buttons, text="Update App", command=update_app, width=12).pack(side="left", padx=(8, 0))
 
-    listbox = tk.Listbox(managed_frame, height=9)
+    listbox = tk.Listbox(
+        managed_group,
+        height=9,
+        font=("Segoe UI", 10),
+        relief="sunken",
+        borderwidth=1,
+        highlightthickness=1,
+        highlightbackground="#bdbdbd",
+        selectbackground="#cfe8ff",
+        selectforeground="#000000",
+        activestyle="none",
+    )
     listbox.pack(fill="both", expand=True)
+
+    footer = ttk.Frame(frame)
+    footer.pack(fill="x")
+    ttk.Separator(footer, orient="horizontal").pack(fill="x", pady=(0, 8))
+
+    button_row = ttk.Frame(footer)
+    button_row.pack(fill="x")
+
+    def apply_changes() -> None:
+        install_screensaver()
+
+    def ok_and_close() -> None:
+        if install_screensaver():
+            root.destroy()
+
+    ttk.Button(button_row, text="Apply", command=apply_changes, width=10).pack(side="right")
+    ttk.Button(button_row, text="Cancel", command=root.destroy, width=10).pack(side="right", padx=(0, 8))
+    ttk.Button(button_row, text="OK", command=ok_and_close, width=10).pack(side="right", padx=(0, 8))
 
     refresh_screensaver_list()
 
@@ -1083,3 +1189,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

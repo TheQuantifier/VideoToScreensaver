@@ -1,8 +1,12 @@
+#ifndef AppVersion
+#define AppVersion "0.0.0"
+#endif
+
 [Setup]
 AppId={{9B3E3D47-6C94-4E5A-9C2A-6F5646A55C58}
 AppName=VideoToScreensaver
-AppVersion=1.2.0
-AppVerName=VideoToScreensaver v1.2.0
+AppVersion={#AppVersion}
+AppVerName=VideoToScreensaver v{#AppVersion}
 AppPublisher=ManusWebworks
 DefaultDirName={autopf}\VideoToScreensaver
 DefaultGroupName=VideoToScreensaver

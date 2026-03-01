@@ -6,6 +6,11 @@ Set-Location $root
 Write-Host "Building app bundle..." -ForegroundColor Cyan
 python build_app.py
 
+$version = (python -c "from src.version import APP_VERSION; print(APP_VERSION)").Trim()
+if (-not $version) {
+    throw "Could not determine app version from src/version.py"
+}
+
 $possibleIscc = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
@@ -17,6 +22,6 @@ if (-not $iscc) {
 }
 
 Write-Host "Compiling installer..." -ForegroundColor Cyan
-& $iscc "installer\VideoToScreensaver.iss"
+& $iscc "/DAppVersion=$version" "installer\VideoToScreensaver.iss"
 
 Write-Host "Done. Installer at release\VideoToScreensaver-Setup.exe" -ForegroundColor Green
