@@ -1,17 +1,19 @@
 # VideoToScreensaver v1.3
 
 ## Windows Installer
-- **Option 1: Install (new users)**
-  - Download `VideoToScreensaver-Setup.exe` from this release.
-  - Run the installer and launch `VideoToScreensaver` from Start Menu.
-- **Option 2: Update (existing users)**
-  - Open `VideoToScreensaver`.
-  - Click `Update App` and follow the prompts to update in place.
+- Download `VideoToScreensaver-Setup.exe` from this release.
+- Run the installer and launch `VideoToScreensaver` from Start Menu.
 
 ## Updates
-- Added an in-app `Update App` button so users can update in place without reinstalling.
-- App now checks the latest GitHub release, downloads the zip asset, applies the update, and restarts automatically.
-- Improved runtime asset sync to handle file/folder path collisions more safely during updates.
+- Reworked the app UI to use themed `ttk` controls and grouped sections for cleaner layout.
+- Improved control alignment so related labels and inputs stay visually paired.
+- Replaced raw timeout-seconds entry with a `Wait` (minutes) input in the main settings row.
+- Added a standard footer action row with `OK`, `Cancel`, and `Apply`.
+- Updater now supports elevation flow (UAC prompt) when install folder write access requires admin rights.
+- Added clearer status messaging when launching elevated updater mode.
+- App version is now sourced from `src/version.py` (single source of truth).
+- Installer version now comes from the app version at build time (`build_installer.ps1` passes `AppVersion` into Inno Setup).
+- Inno Setup script now uses version preprocessor variables, reducing version mismatch risk.
 
 ## Highlights
 - Turn local videos into a real Windows screensaver from a simple UI.
