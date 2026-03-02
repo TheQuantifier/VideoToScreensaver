@@ -361,6 +361,8 @@ def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int, requ
                 "-NoProfile",
                 "-ExecutionPolicy",
                 "Bypass",
+                "-WindowStyle",
+                "Hidden",
                 "-File",
                 str(script_path),
             ]
@@ -371,7 +373,7 @@ def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int, requ
             "powershell.exe",
             args,
             None,
-            1,
+            0,
         )
         if result <= 32:
             raise OSError(f"Could not start elevated updater (ShellExecuteW code {result}).")
@@ -383,10 +385,12 @@ def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int, requ
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
+            "-WindowStyle",
+            "Hidden",
             "-File",
             str(script_path),
         ],
-        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
 
 
