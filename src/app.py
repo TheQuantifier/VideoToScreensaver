@@ -819,7 +819,7 @@ def launch_gui() -> None:
             return False
 
         status_var.set(
-            "Installed successfully. Next: click 'Open Screen Saver Settings', verify selection, then Apply."
+            "Installed successfully. Next: open Screen Saver Settings, verify selection, then click Apply there."
         )
         messagebox.showinfo(
             "Installed",
@@ -827,7 +827,7 @@ def launch_gui() -> None:
             f"SCR file: {scr_path}\n"
             f"Video copy: {copied_video}\n\n"
             "Next steps:\n"
-            "1) Click 'Open Screen Saver Settings'\n"
+            "1) Click 'Open Settings'\n"
             "2) Ensure '<yourfilename>_vts.scr' is selected\n"
             "3) Set wait time and click Apply",
         )
@@ -1077,7 +1077,8 @@ def launch_gui() -> None:
 
     action_row = ttk.Frame(controls_row)
     action_row.grid(row=0, column=2, sticky="e", padx=(12, 0))
-    ttk.Button(action_row, text="Settings...", command=open_settings, width=12).pack(side="left")
+    ttk.Button(action_row, text="Install as Screensaver", command=install_screensaver, width=22).pack(side="left")
+    ttk.Button(action_row, text="Open Settings", command=open_settings, width=14).pack(side="left", padx=(8, 0))
     ttk.Button(action_row, text="Preview", command=preview_now, width=10).pack(side="left", padx=(8, 0))
 
     timing_row = ttk.Frame(screen_saver_group)
@@ -1102,7 +1103,7 @@ def launch_gui() -> None:
 
     steps_text = (
         "After installing:\n"
-        "1) Open Screen Saver Settings.\n"
+        "1) Click Open Settings.\n"
         "2) Confirm '<yourfilename>_vts.scr' is selected.\n"
         "3) Set 'Wait' to your preferred idle time.\n"
         "4) Click Apply, then OK."
@@ -1143,17 +1144,7 @@ def launch_gui() -> None:
 
     button_row = ttk.Frame(footer)
     button_row.pack(fill="x")
-
-    def apply_changes() -> None:
-        install_screensaver()
-
-    def ok_and_close() -> None:
-        if install_screensaver():
-            root.destroy()
-
-    ttk.Button(button_row, text="Apply", command=apply_changes, width=10).pack(side="right")
-    ttk.Button(button_row, text="Cancel", command=root.destroy, width=10).pack(side="right", padx=(0, 8))
-    ttk.Button(button_row, text="OK", command=ok_and_close, width=10).pack(side="right", padx=(0, 8))
+    ttk.Button(button_row, text="Close", command=root.destroy, width=10).pack(side="right")
 
     refresh_screensaver_list()
 

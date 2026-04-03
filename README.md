@@ -57,11 +57,11 @@ Output:
 2. Click `Browse` and select your video.
 3. Optionally adjust:
    - `Mouse move threshold`
-   - `Timeout seconds`
+   - `Wait` (minutes)
    - `Video fit` (`contain`, `cover`, `stretch`)
    - `Startup transition` (`none`, `fade`, `wipe_left`, `wipe_down`, `zoom_in`)
 4. Click `Install as Screensaver`.
-5. Click `Open Screen Saver Settings`.
+5. Click `Open Settings`.
 6. Confirm `"<yourfilename>_vts.scr"` is selected, set idle wait, click `Apply`.
 
 The app also includes a `Managed screensavers` section where you can:
