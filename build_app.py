@@ -38,7 +38,7 @@ def main() -> None:
         sys.executable,
         "-m",
         "PyInstaller",
-        "--onedir",
+        "--onefile",
         "--windowed",
         "--name",
         APP_NAME,
@@ -56,30 +56,29 @@ def main() -> None:
     ]
     run(command, cwd=root)
 
-    built_bundle = dist_dir / APP_NAME
-    built_exe = built_bundle / f"{APP_NAME}.exe"
+    built_exe = dist_dir / f"{APP_NAME}.exe"
     if not built_exe.is_file():
         raise SystemExit(f"Expected output not found: {built_exe}")
 
-    release_bundle = release_dir / APP_NAME
+    release_exe = release_dir / f"{APP_NAME}.exe"
     try:
-        if release_bundle.exists():
-            shutil.rmtree(release_bundle)
-        shutil.copytree(built_bundle, release_bundle)
+        if release_exe.exists():
+            release_exe.unlink()
+        shutil.copy2(built_exe, release_exe)
     except PermissionError:
         raise SystemExit(
-            f"Cannot overwrite {release_bundle} because it is in use. "
+            f"Cannot overwrite {release_exe} because it is in use. "
             "Close VideoToScreensaver.exe and run build_app.py again."
         )
 
-    legacy_onefile = release_dir / f"{APP_NAME}.exe"
-    if legacy_onefile.exists():
+    legacy_onedir = release_dir / APP_NAME
+    if legacy_onedir.exists():
         try:
-            legacy_onefile.unlink()
+            shutil.rmtree(legacy_onedir)
         except OSError:
             pass
 
-    print(f"Build complete: {release_bundle / (APP_NAME + '.exe')}")
+    print(f"Build complete: {release_exe}")
     print("Run this executable to choose a video and install it as screensaver.")
 
 

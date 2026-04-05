@@ -32,6 +32,14 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
+## Run the UI locally
+
+```powershell
+.\run_ui.ps1
+```
+
+The script prefers `.venv\Scripts\python.exe` when available, then falls back to `python` or `py`.
+
 ## 2) Build the Windows app executable
 
 ```powershell
@@ -39,7 +47,7 @@ python build_app.py
 ```
 
 Output:
-- `release\VideoToScreensaver\VideoToScreensaver.exe`
+- `release\VideoToScreensaver.exe`
 
 ## 2b) Build a Windows installer (easy distribution)
 
@@ -71,9 +79,9 @@ The app also includes a `Managed screensavers` section where you can:
 If you used the installer, users can launch from Start Menu shortcut: `VideoToScreensaver`.
 
 ## Notes
-- The app stores files in `%LOCALAPPDATA%\VideoToScreensaver`.
-- During install, the app copies itself to `%LOCALAPPDATA%\VideoToScreensaver\<yourfilename>_vts.scr`.
-- Build now uses `PyInstaller --onedir` for faster startup compared to onefile extraction.
+- The app uses `%LOCALAPPDATA%\VideoToScreensaver` for updater helper files.
+- Installed screensavers are copied to the Windows screensaver folder and use `%ProgramData%\VideoToScreensaver\Screensavers\<name>\` for their stored video and config.
+- Build now uses `PyInstaller --onefile` so the installed `.scr` is self-contained.
 - H.264 `.mp4` is the most compatible format.
 - If it exits too fast, increase `Mouse move threshold`.
 - `contain` keeps full frame with black bars, `cover` fills screen by cropping edges, `stretch` fills screen by distortion.
