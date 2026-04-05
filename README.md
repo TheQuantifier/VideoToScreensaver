@@ -61,7 +61,7 @@ Output:
 - `release\VideoToScreensaver-Setup.exe`
 
 ## 3) Use the app
-1. Run `release\VideoToScreensaver\VideoToScreensaver.exe`.
+1. Run `release\VideoToScreensaver.exe`.
 2. Click `Browse` and select your video.
 3. Optionally adjust:
    - `Mouse move threshold`
