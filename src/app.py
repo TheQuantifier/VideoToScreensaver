@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import re
@@ -56,6 +57,8 @@ class MONITORINFO(ctypes.Structure):
 MONITORINFOF_PRIMARY = 0x00000001
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
+DWMWA_CAPTION_COLOR = 35
+DWMWA_TEXT_COLOR = 36
 
 
 def show_message(title: str, message: str) -> None:
@@ -68,6 +71,8 @@ def apply_dark_title_bar(window: tk.Tk) -> None:
         value = ctypes.c_int(1)
         hwnd_ref = wintypes.HWND(hwnd)
         set_window_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        dark_caption = ctypes.c_int(0x00161B)
+        light_text = ctypes.c_int(0x00F2F6EE)
 
         for attribute in (DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1):
             result = set_window_attribute(
@@ -78,6 +83,17 @@ def apply_dark_title_bar(window: tk.Tk) -> None:
             )
             if result == 0:
                 break
+
+        for attribute, attr_value in (
+            (DWMWA_CAPTION_COLOR, dark_caption),
+            (DWMWA_TEXT_COLOR, light_text),
+        ):
+            set_window_attribute(
+                hwnd_ref,
+                ctypes.c_uint(attribute),
+                ctypes.byref(attr_value),
+                ctypes.sizeof(attr_value),
+            )
     except Exception:
         pass
 
@@ -365,10 +381,11 @@ def download_file(url: str, destination: Path) -> None:
         shutil.copyfileobj(response, out)
 
 
-def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int, require_admin: bool = False) -> None:
-    def ps_quote(text: str) -> str:
-        return text.replace("'", "''")
+def ps_quote(text: str) -> str:
+    return text.replace("'", "''")
 
+
+def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int, require_admin: bool = False) -> None:
     script_path = APP_DIR / "run_update.ps1"
     script = (
         "$ErrorActionPreference = 'Stop'\n"
@@ -427,6 +444,57 @@ def launch_self_update(zip_path: Path, install_dir: Path, current_pid: int, requ
         ],
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
+
+
+def launch_delayed_windows_command(command: str, current_pid: int) -> None:
+    parts = split_windows_command_line(command)
+    if not parts:
+        raise OSError("Uninstall command was empty.")
+
+    executable = parts[0]
+    parameters = parts[1:]
+    use_runas = (
+        executable.lower().endswith("unins000.exe")
+        or any(token.lower() in ("/x", "/uninstall") for token in parameters)
+        or any(token.lower().startswith("/x{") for token in parameters)
+    )
+
+    script_path = APP_DIR / "run_uninstall.ps1"
+    arg_list = "@(" + ", ".join(f"'{ps_quote(part)}'" for part in parameters) + ")"
+    verb_line = " -Verb 'RunAs'" if use_runas else ""
+    script = (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$pidToWait = {current_pid}\n"
+        f"$exePath = '{ps_quote(executable)}'\n"
+        f"$argList = {arg_list}\n"
+        "for ($i = 0; $i -lt 240; $i++) {\n"
+        "  if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }\n"
+        "  Start-Sleep -Milliseconds 250\n"
+        "}\n"
+        f"Start-Process -FilePath $exePath -ArgumentList $argList{verb_line}\n"
+    )
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            str(script_path),
+        ],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+
+def get_installed_uninstaller_path() -> Path | None:
+    if not getattr(sys, "frozen", False):
+        return None
+    candidate = Path(sys.executable).resolve().parent / "unins000.exe"
+    return candidate if candidate.is_file() else None
 
 
 def render_frame(frame: np.ndarray, screen_w: int, screen_h: int, fit_mode: str) -> np.ndarray:
@@ -693,9 +761,9 @@ def find_uninstall_command() -> str | None:
                             with winreg.OpenKey(uninstall_root, subkey_name) as app_key:
                                 display_name, _ = winreg.QueryValueEx(app_key, "DisplayName")
                                 try:
-                                    uninstall_cmd, _ = winreg.QueryValueEx(app_key, "QuietUninstallString")
-                                except OSError:
                                     uninstall_cmd, _ = winreg.QueryValueEx(app_key, "UninstallString")
+                                except OSError:
+                                    uninstall_cmd, _ = winreg.QueryValueEx(app_key, "QuietUninstallString")
                         except OSError:
                             continue
 
@@ -728,17 +796,38 @@ def launch_windows_command(command: str) -> None:
         raise OSError("Uninstall command was empty.")
 
     executable = parts[0]
-    parameters = subprocess.list2cmdline(parts[1:]) if len(parts) > 1 else None
-    result = ctypes.windll.shell32.ShellExecuteW(
-        None,
-        "open",
-        executable,
-        parameters,
-        None,
-        1,
-    )
-    if result <= 32:
-        raise OSError(f"Could not start uninstall command (ShellExecuteW code {result}).")
+    launch_windows_file(executable, parts[1:])
+
+
+def launch_windows_file(executable: str, parameters: list[str] | None = None, require_admin: bool = False) -> None:
+    parameters = parameters or []
+    parameter_text = subprocess.list2cmdline(parameters) if parameters else None
+    verbs = ["open"]
+    lower_parts = [part.lower() for part in parameters]
+    if require_admin or (
+        executable.lower().endswith("unins000.exe")
+        or any(token in lower_parts for token in ("/x", "/uninstall"))
+        or any(token.startswith("/x{") for token in lower_parts)
+    ):
+        verbs.insert(0, "runas")
+
+    last_result = 0
+    for verb in verbs:
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None,
+            verb,
+            executable,
+            parameter_text,
+            None,
+            1,
+        )
+        if result > 32:
+            return
+        last_result = result
+        if verb == "runas" and result == 1223:
+            raise OSError("Uninstall was canceled at the UAC prompt.")
+
+    raise OSError(f"Could not start uninstall command (ShellExecuteW code {last_result}).")
 
 
 def list_managed_screensavers() -> list[Path]:
@@ -981,7 +1070,8 @@ def launch_gui() -> None:
     root = tk.Tk()
     root.title(APP_DISPLAY_NAME)
     root.geometry("980x760")
-    root.minsize(940, 720)
+    root.minsize(980, 760)
+    root.maxsize(980, 760)
     root.resizable(False, False)
     icon_path = get_resource_path("assets/vts_icon.ico")
     if icon_path.is_file():
@@ -991,6 +1081,7 @@ def launch_gui() -> None:
             pass
     root.update_idletasks()
     apply_dark_title_bar(root)
+    root.after(0, lambda: apply_dark_title_bar(root))
 
     palette = {
         "bg": "#0b0d10",
@@ -1408,7 +1499,8 @@ def launch_gui() -> None:
     def open_settings() -> None:
         open_screen_saver_settings()
 
-    uninstall_command = find_uninstall_command()
+    uninstall_path = get_installed_uninstaller_path()
+    uninstall_command = find_uninstall_command() if uninstall_path is None else None
 
     def update_app() -> None:
         if not getattr(sys, "frozen", False):
@@ -1496,7 +1588,7 @@ def launch_gui() -> None:
         root.destroy()
 
     def uninstall_app() -> None:
-        if not uninstall_command:
+        if not uninstall_path and not uninstall_command:
             messagebox.showinfo(
                 "VideoToScreensaver",
                 "Uninstall is only available from the installed app.\nUse Windows Installed Apps if this is a local source run.",
@@ -1510,12 +1602,17 @@ def launch_gui() -> None:
             return
 
         try:
-            launch_windows_command(uninstall_command)
-        except OSError as exc:
+            if uninstall_path is not None:
+                atexit.register(launch_windows_file, str(uninstall_path), [], True)
+            elif uninstall_command is not None:
+                atexit.register(launch_windows_command, uninstall_command)
+            else:
+                raise OSError("No uninstall command was found.")
+        except (OSError, ValueError) as exc:
             messagebox.showerror("VideoToScreensaver", f"Could not start uninstall:\n{exc}")
             return
 
-        status_var.set("Uninstaller started. Closing app...")
+        status_var.set("Closing app and starting uninstaller...")
         root.destroy()
 
     def refresh_screensaver_list() -> None:
@@ -1577,8 +1674,11 @@ def launch_gui() -> None:
     shell = ttk.Frame(root, style="Shell.TFrame")
     shell.pack(fill="both", expand=True)
 
+    scroll_outer = ttk.Frame(shell, style="Shell.TFrame", padding=(10, 10, 10, 10))
+    scroll_outer.pack(fill="both", expand=True)
+
     scroll_canvas = tk.Canvas(
-        shell,
+        scroll_outer,
         bg=palette["bg"],
         bd=0,
         highlightthickness=0,
@@ -1586,25 +1686,33 @@ def launch_gui() -> None:
     )
     scroll_canvas.pack(side="left", fill="both", expand=True)
 
-    scrollbar = ttk.Scrollbar(shell, orient="vertical", command=scroll_canvas.yview, style="Vertical.TScrollbar")
+    scrollbar = ttk.Scrollbar(scroll_outer, orient="vertical", command=scroll_canvas.yview, style="Vertical.TScrollbar")
     scrollbar.pack(side="right", fill="y")
     scroll_canvas.configure(yscrollcommand=scrollbar.set)
 
     frame = ttk.Frame(scroll_canvas, style="Shell.TFrame", padding=(20, 18, 20, 18))
     canvas_window = scroll_canvas.create_window((0, 0), window=frame, anchor="nw")
+    page_wheel_remainder = 0
+    list_wheel_remainder = 0
 
     def sync_scroll_region(_event=None) -> None:
         scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
 
     def sync_canvas_width(event) -> None:
-        scroll_canvas.itemconfigure(canvas_window, width=event.width)
+        width = max(event.width, 1)
+        scroll_canvas.itemconfigure(canvas_window, width=width)
 
-    def on_mousewheel(event) -> None:
-        scroll_canvas.yview_scroll(int(-event.delta / 120), "units")
+    def scroll_page(event) -> str:
+        nonlocal page_wheel_remainder
+        page_wheel_remainder += -event.delta
+        steps = int(page_wheel_remainder / 120)
+        if steps:
+            page_wheel_remainder -= steps * 120
+            scroll_canvas.yview_scroll(steps * 2, "units")
+        return "break"
 
     frame.bind("<Configure>", sync_scroll_region)
     scroll_canvas.bind("<Configure>", sync_canvas_width)
-    scroll_canvas.bind_all("<MouseWheel>", on_mousewheel)
 
     header = ttk.Frame(frame, style="Card.TFrame", padding=(18, 16, 18, 16))
     header.pack(fill="x", pady=(0, 14))
@@ -1662,20 +1770,22 @@ def launch_gui() -> None:
         side="left", padx=(10, 0)
     )
 
+    source_footer = ttk.Frame(source_group, style="Card.TFrame")
+    source_footer.pack(fill="x", pady=(10, 0))
     source_hint = ttk.Label(
-        source_group,
+        source_footer,
         text="Supported: .mp4 .mov .avi .mkv .wmv",
         style="Muted.TLabel",
     )
-    source_hint.pack(anchor="w", pady=(10, 0))
+    source_hint.pack(side="left")
     install_button = ttk.Button(
-        source_group,
+        source_footer,
         text="Install as Screensaver",
         command=install_screensaver,
         style="Primary.TButton",
         width=22,
     )
-    install_button.pack(anchor="w", pady=(12, 0))
+    install_button.pack(side="right")
     refresh_install_button_state()
 
     screen_saver_group = ttk.LabelFrame(content, text="Behavior", style="Section.TLabelframe", padding=(16, 14, 16, 16))
@@ -1765,8 +1875,14 @@ def launch_gui() -> None:
         width=16,
     ).pack(side="left", padx=(8, 0))
 
+    list_frame = ttk.Frame(managed_group, style="Card.TFrame")
+    list_frame.pack(fill="both", expand=True)
+
+    list_scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+    list_scrollbar.pack(side="right", fill="y")
+
     listbox = tk.Listbox(
-        managed_group,
+        list_frame,
         height=9,
         font=("Bahnschrift", 10),
         bg=palette["panel_alt"],
@@ -1780,8 +1896,43 @@ def launch_gui() -> None:
         selectforeground=palette["accent_text"],
         selectborderwidth=0,
         activestyle="none",
+        yscrollcommand=list_scrollbar.set,
     )
-    listbox.pack(fill="both", expand=True)
+    listbox.pack(side="left", fill="both", expand=True)
+    list_scrollbar.configure(command=listbox.yview)
+
+    def on_listbox_mousewheel(event) -> str:
+        nonlocal list_wheel_remainder
+        list_wheel_remainder += -event.delta
+        steps = int(list_wheel_remainder / 120)
+        if steps:
+            list_wheel_remainder -= steps * 120
+            listbox.yview_scroll(steps, "units")
+        return "break"
+
+    def is_descendant(widget: tk.Misc | None, ancestor: tk.Misc) -> bool:
+        current = widget
+        while current is not None:
+            if current == ancestor:
+                return True
+            parent_name = current.winfo_parent()
+            if not parent_name:
+                break
+            current = current.nametowidget(parent_name)
+        return False
+
+    def route_mousewheel(event) -> str | None:
+        x_root, y_root = root.winfo_pointerxy()
+        target = root.winfo_containing(x_root, y_root)
+        if target is None:
+            return None
+        if is_descendant(target, listbox):
+            return on_listbox_mousewheel(event)
+        if is_descendant(target, scroll_outer):
+            return scroll_page(event)
+        return None
+
+    root.bind_all("<MouseWheel>", route_mousewheel)
 
     app_settings_group = ttk.LabelFrame(
         content, text="App Settings", style="Section.TLabelframe", padding=(16, 14, 16, 16)
@@ -1792,7 +1943,7 @@ def launch_gui() -> None:
     app_settings_row.pack(fill="x")
     app_settings_text = (
         "Manage application-level actions separately from installed screensavers."
-        if uninstall_command
+        if uninstall_path or uninstall_command
         else "Update and uninstall are available only from the installed app build."
     )
     ttk.Label(
@@ -1812,7 +1963,7 @@ def launch_gui() -> None:
         width=12,
     )
     uninstall_button.pack(side="right")
-    if not uninstall_command:
+    if not uninstall_path and not uninstall_command:
         uninstall_button.state(["disabled"])
 
     update_button = ttk.Button(
