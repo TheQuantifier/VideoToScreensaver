@@ -11,6 +11,10 @@
 
 ## Updates
 - Fixed the in-app uninstall flow so the button closes the app and launches the installed `unins000.exe` uninstaller reliably.
+- Fixed `Install as Screensaver` so the elevated install path does not reopen the app UI as a second window.
+- Fixed managed screensaver install refresh so successful installs are validated and immediately appear in the managed list.
+- Moved per-screensaver config into `%LOCALAPPDATA%\VideoToScreensaver\Screensavers\...` so `Save Settings` no longer needs repeated admin elevation.
+- Updated uninstall cleanup so the app removes its own `%LOCALAPPDATA%\VideoToScreensaver` files before launching the uninstaller.
 - Fixed mouse-wheel scrolling for the main page while keeping the managed-screensaver list scroll behavior intact.
 - Restored balanced left/right page spacing in the main app layout.
 - Strengthened Windows dark title-bar requests so supported systems are more likely to show a dark caption bar.

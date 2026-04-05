@@ -80,7 +80,8 @@ If you used the installer, users can launch from Start Menu shortcut: `VideoToSc
 
 ## Notes
 - The app uses `%LOCALAPPDATA%\VideoToScreensaver` for updater helper files.
-- Installed screensavers are copied to the Windows screensaver folder and use `%ProgramData%\VideoToScreensaver\Screensavers\<name>\` for their stored video and config.
+- Installed screensavers are copied to the Windows screensaver folder and use `%ProgramData%\VideoToScreensaver\Screensavers\<name>\` for stored video files.
+- Per-screensaver config is stored in `%LOCALAPPDATA%\VideoToScreensaver\Screensavers\<name>\config.json` so settings can be updated without extra elevation.
 - Build now uses `PyInstaller --onefile` so the installed `.scr` is self-contained.
 - H.264 `.mp4` is the most compatible format.
 - If it exits too fast, increase `Mouse move threshold`.

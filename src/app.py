@@ -31,6 +31,7 @@ APP_DISPLAY_NAME = f"{APP_NAME} v{APP_VERSION}"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 PROGRAM_DATA_DIR = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / APP_NAME
 MANAGED_ROOT_DIR = PROGRAM_DATA_DIR / "Screensavers"
+MANAGED_CONFIG_DIR = APP_DIR / "Screensavers"
 SCR_NAME = f"{APP_NAME}.scr"
 CONFIG_NAME = "config.json"
 SCR_TAG = "_vts"
@@ -54,11 +55,34 @@ class MONITORINFO(ctypes.Structure):
     ]
 
 
+class SHELLEXECUTEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("fMask", ctypes.c_ulong),
+        ("hwnd", wintypes.HWND),
+        ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR),
+        ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE),
+        ("lpIDList", wintypes.LPVOID),
+        ("lpClass", wintypes.LPCWSTR),
+        ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD),
+        ("hIcon", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    ]
+
+
 MONITORINFOF_PRIMARY = 0x00000001
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
 DWMWA_CAPTION_COLOR = 35
 DWMWA_TEXT_COLOR = 36
+SEE_MASK_NOCLOSEPROCESS = 0x00000040
+INFINITE = 0xFFFFFFFF
+SW_SHOWNORMAL = 1
 
 
 def show_message(title: str, message: str) -> None:
@@ -187,7 +211,15 @@ def get_storage_dir_for_scr(scr_path: Path) -> Path:
     return MANAGED_ROOT_DIR / scr_path.stem
 
 
+def get_config_dir_for_scr(scr_path: Path) -> Path:
+    return MANAGED_CONFIG_DIR / scr_path.stem
+
+
 def get_config_path_for_scr(scr_path: Path) -> Path:
+    return get_config_dir_for_scr(scr_path) / CONFIG_NAME
+
+
+def get_legacy_managed_config_path_for_scr(scr_path: Path) -> Path:
     return get_storage_dir_for_scr(scr_path) / CONFIG_NAME
 
 
@@ -303,7 +335,10 @@ def get_source_video_path(config: dict) -> str:
 
 def read_config_for_scr(scr_path: Path) -> dict:
     if is_managed_screensaver_path(scr_path):
-        return read_config(get_config_path_for_scr(scr_path))
+        config = read_config(get_config_path_for_scr(scr_path))
+        if config:
+            return config
+        return read_config(get_legacy_managed_config_path_for_scr(scr_path))
     if is_legacy_managed_screensaver_path(scr_path):
         return read_config(get_legacy_config_path())
     return {}
@@ -830,6 +865,12 @@ def launch_windows_file(executable: str, parameters: list[str] | None = None, re
     raise OSError(f"Could not start uninstall command (ShellExecuteW code {last_result}).")
 
 
+def cleanup_local_app_data() -> None:
+    if not APP_DIR.exists():
+        return
+    shutil.rmtree(APP_DIR)
+
+
 def list_managed_screensavers() -> list[Path]:
     items: dict[str, Path] = {}
 
@@ -900,8 +941,14 @@ def install_from_gui(
         raise RuntimeError("Install was canceled or failed before screensaver files were written.")
 
     actual_scr_path = get_registry_scr_path() or (get_system_screensaver_dir() / f"{sanitize_file_stem(source_video.stem)}{SCR_TAG}.scr")
-    config = read_config(get_config_path_for_scr(actual_scr_path))
+    if not actual_scr_path.is_file():
+        raise FileNotFoundError(f"Installed screensaver was not found:\n{actual_scr_path}")
+    config = read_config_for_scr(actual_scr_path)
+    if not config:
+        raise FileNotFoundError(f"Installed screensaver config was not found:\n{get_config_path_for_scr(actual_scr_path)}")
     actual_video = get_installed_video_path(config) if config else get_storage_dir_for_scr(actual_scr_path) / source_video.name
+    if not actual_video or not actual_video.is_file():
+        raise FileNotFoundError(f"Installed video was not found:\n{actual_video}")
     return actual_scr_path, actual_video
 
 
@@ -949,7 +996,7 @@ def save_managed_screensaver_settings(
         raise ValueError(f"Not a managed screensaver path:\n{scr_path}")
 
     config_path = get_config_path_for_scr(scr_path)
-    config = read_config(config_path)
+    config = read_config_for_scr(scr_path)
     video_path = get_installed_video_path(config)
     if not video_path or not video_path.is_file():
         raise FileNotFoundError(f"Installed video not found for screensaver:\n{scr_path}")
@@ -962,7 +1009,7 @@ def save_managed_screensaver_settings(
     if active_scr and _norm_path_str(str(active_scr)) == _norm_path_str(str(scr_path)):
         apply_registry_settings(scr_path, timeout_seconds)
 
-    return read_config(config_path)
+    return read_config_for_scr(scr_path)
 
 
 def save_legacy_screensaver_settings(
@@ -1017,6 +1064,9 @@ def delete_managed_screensaver(scr_path: Path) -> None:
     storage_dir = get_storage_dir_for_scr(scr_path)
     if storage_dir.exists():
         shutil.rmtree(storage_dir)
+    config_dir = get_config_dir_for_scr(scr_path)
+    if config_dir.exists():
+        shutil.rmtree(config_dir)
 
 
 def load_seed_config() -> dict:
@@ -1034,7 +1084,7 @@ def load_seed_config() -> dict:
             candidates.append(scr_path)
 
     for scr_path in candidates:
-        config = read_config(get_config_path_for_scr(scr_path))
+        config = read_config_for_scr(scr_path)
         if config:
             return config
     return {}
@@ -1044,22 +1094,36 @@ def run_self_elevated(arguments: list[str]) -> int:
     if not getattr(sys, "frozen", False):
         raise RuntimeError("Install and delete actions require the built app executable.")
 
-    def ps_quote(text: str) -> str:
-        return text.replace("'", "''")
-
     exe_path = str(Path(sys.executable))
-    arg_list = ", ".join(f"'{ps_quote(arg)}'" for arg in arguments)
-    command = (
-        f"$p = Start-Process -FilePath '{ps_quote(exe_path)}' -ArgumentList @({arg_list}) "
-        "-Verb RunAs -Wait -PassThru; "
-        "exit $p.ExitCode"
-    )
-    result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-Command", command],
-        check=False,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    return int(result.returncode)
+    parameters = subprocess.list2cmdline(arguments)
+    execute_info = SHELLEXECUTEINFOW()
+    execute_info.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS
+    execute_info.hwnd = None
+    execute_info.lpVerb = "runas"
+    execute_info.lpFile = exe_path
+    execute_info.lpParameters = parameters
+    execute_info.lpDirectory = str(Path(exe_path).parent)
+    execute_info.nShow = SW_SHOWNORMAL
+
+    if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(execute_info)):
+        code = ctypes.windll.kernel32.GetLastError()
+        if code == 1223:
+            return 1223
+        raise OSError(f"Could not start elevated process (ShellExecuteExW error {code}).")
+
+    process_handle = execute_info.hProcess
+    if not process_handle:
+        return 0
+
+    try:
+        ctypes.windll.kernel32.WaitForSingleObject(process_handle, INFINITE)
+        exit_code = wintypes.DWORD()
+        if ctypes.windll.kernel32.GetExitCodeProcess(process_handle, ctypes.byref(exit_code)):
+            return int(exit_code.value)
+        return 0
+    finally:
+        ctypes.windll.kernel32.CloseHandle(process_handle)
 
 
 def open_screen_saver_settings() -> None:
@@ -1351,24 +1415,28 @@ def launch_gui() -> None:
             messagebox.showerror("VideoToScreensaver", str(exc))
             return False
 
-        load_settings_into_form(
-            {
+        installed_config = read_config_for_scr(scr_path)
+        if not installed_config:
+            installed_config = {
+                "source_video_path": str(video_path),
+                "video_path": str(copied_video),
                 "mouse_move_threshold": DEFAULT_THRESHOLD,
                 "timeout_seconds": DEFAULT_TIMEOUT_SECONDS,
                 "fit_mode": DEFAULT_FIT_MODE,
                 "startup_transition": DEFAULT_STARTUP_TRANSITION,
+                "scr_path": str(scr_path),
             }
-        )
+
+        load_settings_into_form(installed_config)
+        selected_video.set(get_source_video_path(installed_config))
         refresh_save_button_state()
-        status_var.set(
-            "Installed with default settings. Use Save Settings to update playback behavior for the active screensaver."
-        )
+        status_var.set(f"Installed and set active: {scr_path.name}")
         messagebox.showinfo(
             "Installed",
             "Screensaver installed.\n\n"
             f"SCR file: {scr_path}\n"
             f"Video copy: {copied_video}\n\n"
-            "Default settings were applied.\n"
+            "The installed screensaver was set active and added to the managed list.\n"
             "Use the controls below and click 'Save Settings' to change playback behavior.",
         )
         refresh_screensaver_list()
@@ -1602,6 +1670,7 @@ def launch_gui() -> None:
             return
 
         try:
+            cleanup_local_app_data()
             if uninstall_path is not None:
                 atexit.register(launch_windows_file, str(uninstall_path), [], True)
             elif uninstall_command is not None:
