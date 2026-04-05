@@ -5,6 +5,13 @@ __pycache__/
 # Build outputs
 build_artifacts/
 release/
+build/
+dist/
+*.spec
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
 
 # Virtual environments
 .venv/
