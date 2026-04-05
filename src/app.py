@@ -54,10 +54,32 @@ class MONITORINFO(ctypes.Structure):
 
 
 MONITORINFOF_PRIMARY = 0x00000001
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
 
 
 def show_message(title: str, message: str) -> None:
     ctypes.windll.user32.MessageBoxW(None, message, title, 0)
+
+
+def apply_dark_title_bar(window: tk.Tk) -> None:
+    try:
+        hwnd = window.winfo_id()
+        value = ctypes.c_int(1)
+        hwnd_ref = wintypes.HWND(hwnd)
+        set_window_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+
+        for attribute in (DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1):
+            result = set_window_attribute(
+                hwnd_ref,
+                ctypes.c_uint(attribute),
+                ctypes.byref(value),
+                ctypes.sizeof(value),
+            )
+            if result == 0:
+                break
+    except Exception:
+        pass
 
 
 def get_mouse_pos() -> tuple[int, int]:
@@ -967,6 +989,8 @@ def launch_gui() -> None:
             root.iconbitmap(str(icon_path))
         except Exception:
             pass
+    root.update_idletasks()
+    apply_dark_title_bar(root)
 
     palette = {
         "bg": "#0b0d10",
