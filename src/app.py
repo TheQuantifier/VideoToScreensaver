@@ -670,11 +670,15 @@ def find_uninstall_command() -> str | None:
                         try:
                             with winreg.OpenKey(uninstall_root, subkey_name) as app_key:
                                 display_name, _ = winreg.QueryValueEx(app_key, "DisplayName")
-                                uninstall_cmd, _ = winreg.QueryValueEx(app_key, "UninstallString")
+                                try:
+                                    uninstall_cmd, _ = winreg.QueryValueEx(app_key, "QuietUninstallString")
+                                except OSError:
+                                    uninstall_cmd, _ = winreg.QueryValueEx(app_key, "UninstallString")
                         except OSError:
                             continue
 
-                        if str(display_name).strip() != APP_NAME:
+                        display_name_text = str(display_name).strip().lower()
+                        if not display_name_text.startswith(APP_NAME.lower()):
                             continue
                         text = str(uninstall_cmd).strip()
                         if text:
@@ -682,6 +686,37 @@ def find_uninstall_command() -> str | None:
             except OSError:
                 continue
     return None
+
+
+def split_windows_command_line(command: str) -> list[str]:
+    argc = ctypes.c_int()
+    argv = ctypes.windll.shell32.CommandLineToArgvW(command, ctypes.byref(argc))
+    if not argv:
+        raise OSError("Could not parse uninstall command line.")
+
+    try:
+        return [argv[i] for i in range(argc.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
+
+
+def launch_windows_command(command: str) -> None:
+    parts = split_windows_command_line(command)
+    if not parts:
+        raise OSError("Uninstall command was empty.")
+
+    executable = parts[0]
+    parameters = subprocess.list2cmdline(parts[1:]) if len(parts) > 1 else None
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None,
+        "open",
+        executable,
+        parameters,
+        None,
+        1,
+    )
+    if result <= 32:
+        raise OSError(f"Could not start uninstall command (ShellExecuteW code {result}).")
 
 
 def list_managed_screensavers() -> list[Path]:
@@ -1451,7 +1486,7 @@ def launch_gui() -> None:
             return
 
         try:
-            subprocess.Popen(uninstall_command)
+            launch_windows_command(uninstall_command)
         except OSError as exc:
             messagebox.showerror("VideoToScreensaver", f"Could not start uninstall:\n{exc}")
             return
